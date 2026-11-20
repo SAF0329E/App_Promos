@@ -14,6 +14,7 @@ const DEFAULT_PROMOS={
 const PRODUCTS={"8889":"Bonif Megarollo Cliente Nuevo","21201":"Papel Hig Max Gruesito 4H x 6 und","21202":"Papel Hig Max Gruesito 4H x 6 und Paca x 8","2119":"Papel Hig Max Gruesito x 13","11030":"Papel Hig Max Gruesito x 26","11020":"Papel Hig Max Gruesito x 52","3018":"Papel Hig Mega s/empaque x 12","3012":"Papel Hig Mega x 13","3016":"Papel Hig Mega x 2","3017":"Papel Hig Mega x 4","3025":"Serv Popular x 200","3027":"Serv Popular x 300","30288":"Serv Popular x 600 Caja x 15","3029":"Toalla Cocina 3H x 50 hojas","8205":"Barra AS Bicarb y Manz x 250 g","8170":"Barra AS x 250 g"};
 let promos=JSON.parse(localStorage.getItem("bodega-promos")||"null")||DEFAULT_PROMOS;
 let rows=[], lastTotals=[];
+let paddlePromise=null;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 function toast(text){const e=$("#toast");e.textContent=text;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2600)}
@@ -86,7 +87,7 @@ function ocrScore(items){
 }
 function parseOCRLayout(data){
   const words=(data.words||[]).filter(w=>w.text&&Number(w.confidence??w.conf??0)>=0)
-    .map(w=>({text:w.text.trim(),x:w.bbox?.x0||0,y:((w.bbox?.y0||0)+(w.bbox?.y1||0))/2}));
+    .map(w=>({text:w.text.trim(),x:w.bbox?.x0??w.x??0,y:w.bbox?((w.bbox.y0+w.bbox.y1)/2):(w.y??0)}));
   const pageWidth=Math.max(...words.map(w=>w.x),1);
   const groups=[];
   words.sort((a,b)=>a.y-b.y||a.x-b.x).forEach(word=>{
@@ -108,7 +109,35 @@ function parseOCRLayout(data){
     return {code,description,units:tokens[unitIndex].replace(/[^\d]/g,""),unknown:false};
   }).filter(Boolean);
 }
+function parsePaddleItems(items){
+  const words=items.filter(item=>item.text&&Number(item.score??1)>=.25).map(item=>{
+    const poly=item.poly||[];
+    const xs=poly.map(p=>Array.isArray(p)?p[0]:p.x||0),ys=poly.map(p=>Array.isArray(p)?p[1]:p.y||0);
+    return {text:item.text.trim(),x:Math.min(...xs),y:(Math.min(...ys)+Math.max(...ys))/2};
+  });
+  return parseOCRLayout({words,width:Math.max(...words.map(w=>w.x),1)});
+}
+async function getPaddleOCR(){
+  if(!paddlePromise)paddlePromise=import("https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm")
+    .then(({PaddleOCR})=>PaddleOCR.create({lang:"es",ocrVersion:"PP-OCRv5",ortOptions:{backend:"wasm",numThreads:1}}));
+  return paddlePromise;
+}
+async function readPaddle(file){
+  $("#readerState").textContent="Cargando lector local avanzado…";
+  const ocr=await getPaddleOCR();
+  const [result]=await ocr.predict(file);
+  return parsePaddleItems(result.items||[]);
+}
 async function readOCRInBestOrientation(file){
+  try{
+    const paddle=await readPaddle(file);
+    if(paddle.length)return paddle;
+    for(const degrees of [90,270]){
+      const rotated=await rotateForOCR(file,degrees);
+      const turned=await readPaddle(rotated);
+      if(turned.length)return turned;
+    }
+  }catch(e){console.warn("PaddleOCR no disponible",e)}
   let best={rows:[],score:-1};
   for(const degrees of [0,90,180,270]){
     const image=await rotateForOCR(file,degrees);
