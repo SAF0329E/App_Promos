@@ -57,8 +57,8 @@ function calculate(){
 function parseOCR(text){
   const found=[];
   for(const line of text.split(/\r?\n/)){
-    const clean=line.replace(/[|]/g," ").replace(/\s+/g," ").replace(/^(DIEGO|DIEG0)\s+/i,"").trim();
-    const m=clean.match(/[*]?\s*(\d{3,5})(?:\s+(.+?))?\s+(\d{1,5})\s*$/);
+    const clean=line.replace(/[|]/g," ").replace(/\s+/g," ").replace(/^(DIEGO|DIEG0|EDISSON)\s+/i,"").trim();
+    const m=clean.match(/(?:^|\s)(\d{3,5})\s+(.+?)\s+(\d{1,5})\s*$/);
     if(m){
       const code=m[1], description=(m[2]||PRODUCTS[code]||"").trim();
       if(description.length>=3&&/[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(description)){
@@ -115,7 +115,9 @@ async function readOCRInBestOrientation(file){
     const result=await Tesseract.recognize(image,"spa",{tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",logger:m=>{
       if(m.status)$("#readerState").textContent=`Revisando orientación ${degrees}°: ${Math.round((m.progress||0)*100)}%`;
     }});
-    const candidate=parseOCRLayout(result.data);
+    const layout=parseOCRLayout(result.data);
+    const textRows=parseOCR(result.data.text);
+    const candidate=ocrScore(layout)>=ocrScore(textRows)?layout:textRows;
     const score=ocrScore(candidate);
     if(score>best.score)best={rows:candidate,score};
   }
