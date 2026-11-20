@@ -19,14 +19,13 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 function toast(text){const e=$("#toast");e.textContent=text;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2600)}
 function savePromos(){localStorage.setItem("bodega-promos",JSON.stringify(promos))}
 function renderRows(){
- const body=$("#inputRows");
- body.innerHTML=rows.map((r,i)=>`<tr class="${r.unknown?"unknown":""}">
- <td><input data-i="${i}" data-k="code" value="${esc(r.code)}" inputmode="numeric" aria-label="Código"></td>
- <td><input data-i="${i}" data-k="description" value="${esc(r.description||"")}" placeholder="Producto" aria-label="Descripción"></td>
- <td><input data-i="${i}" data-k="units" value="${esc(r.units||"")}" type="number" min="0" inputmode="numeric" aria-label="Unidades"></td>
- <td><button class="remove" data-remove="${i}" aria-label="Eliminar">✕</button></td></tr>`).join("");
- body.querySelectorAll("input").forEach(x=>x.addEventListener("input",e=>{const r=rows[+e.target.dataset.i];r[e.target.dataset.k]=e.target.value;r.unknown=!!r.code&&!promos[r.code]&&!PRODUCTS[r.code];if(e.target.dataset.k==="code"&&!r.description&&PRODUCTS[r.code])r.description=PRODUCTS[r.code];renderRows();}));
- body.querySelectorAll("[data-remove]").forEach(x=>x.onclick=()=>{rows.splice(+x.dataset.remove,1);renderRows()});
+  const body=$("#inputRows");
+  body.innerHTML=rows.map((r,i)=>`<tr class="${r.unknown?"unknown":""}">
+  <td><input data-i="${i}" data-k="description" value="${esc(r.description||"")}" placeholder="Nombre del producto" aria-label="Producto"><input data-i="${i}" data-k="code" value="${esc(r.code||"")}" type="hidden"></td>
+  <td><input data-i="${i}" data-k="units" value="${esc(r.units||"")}" type="number" min="0" inputmode="numeric" aria-label="Unidades"></td>
+  <td><button class="remove" data-remove="${i}" aria-label="Eliminar">✕</button></td></tr>`).join("");
+  body.querySelectorAll("input").forEach(x=>x.addEventListener("input",e=>{const r=rows[+e.target.dataset.i];r[e.target.dataset.k]=e.target.value;r.unknown=!r.description.trim();}));
+  body.querySelectorAll("[data-remove]").forEach(x=>x.onclick=()=>{rows.splice(+x.dataset.remove,1);renderRows()});
 }
 function calculate(){
  const map=new Map();
@@ -40,15 +39,25 @@ function calculate(){
  return lastTotals;
 }
 function parseOCR(text){
- const found=[];
- for(const line of text.split(/\r?\n/)){const clean=line.replace(/[|]/g," ").trim();const m=clean.match(/[*]?\s*(\d{3,5})\D{0,25}(\d{1,5})(?:\s|$)/);if(m){const code=m[1],units=m[2];found.push({code,units,description:PRODUCTS[code]||"",unknown:!promos[code]&&!PRODUCTS[code]})}}
- return found;
+  const found=[];
+  for(const line of text.split(/\r?\n/)){
+    const clean=line.replace(/[|]/g," ").replace(/\s+/g," ").trim();
+    const m=clean.match(/[*]?\s*(\d{3,5})(?:\s+(.+?))?\s+(\d{1,5})\s*$/);
+    if(m){
+      const code=m[1], description=(m[2]||PRODUCTS[code]||"").trim();
+      found.push({code,units:m[3],description,unknown:!description});
+    } else {
+      const fallback=clean.match(/^(.+?)\s+(\d{1,5})\s*$/);
+      if(fallback)found.push({code:"",description:fallback[1].trim(),units:fallback[2],unknown:false});
+    }
+  }
+  return found;
 }
 async function readPhoto(file){
  $("#readerState").hidden=false;$("#readerState").textContent="Leyendo imagen…";
  const config=JSON.parse(localStorage.getItem("bodega-config")||"{}");
  if(navigator.onLine&&config.apiKey){
-   try{const text=await visionRead(file,config);rows=parseOCR(text);if(!rows.length)throw Error("No se encontraron filas");$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
+    try{rows=await visionRead(file,config);if(!rows.length)throw Error("No se encontraron filas");$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
  }
  $("#offlineNotice").hidden=false;
  try{
@@ -61,9 +70,10 @@ async function readPhoto(file){
 async function visionRead(file,config){
  const data=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file)});
  if(config.provider==="anthropic")throw Error("Claude requiere un proxy seguro");
- const response=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${config.apiKey}`},body:JSON.stringify({model:"gpt-4o-mini",response_format:{type:"json_object"},messages:[{role:"system",content:"Extrae filas de un informe. Devuelve JSON {rows:[{code:string,units:number}]}. Ignora tachaduras y marcas rojas o azules. No inventes datos."},{role:"user",content:[{type:"text",text:"Lee código y unidades de cada fila."},{type:"image_url",image_url:{url:`data:${file.type};base64,${data}`}}]}]})});
- if(!response.ok)throw Error("API");
- const json=await response.json();const parsed=JSON.parse(json.choices[0].message.content);return parsed.rows.map(r=>`${r.code} ${r.units}`).join("\n");
+  const response=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${config.apiKey}`},body:JSON.stringify({model:"gpt-4o-mini",response_format:{type:"json_object"},messages:[{role:"system",content:"Lee un informe de productos. Devuelve únicamente JSON con el formato {rows:[{code:string,description:string,units:number}]}. Extrae el nombre completo del producto y sus unidades. El código es opcional y solo sirve para reconocer promociones. Ignora tachaduras y marcas rojas o azules. No inventes datos."},{role:"user",content:[{type:"text",text:"Lee el nombre del producto y las unidades de cada fila. Si hay una promoción, conserva el nombre de la línea y su cantidad."},{type:"image_url",image_url:{url:`data:${file.type};base64,${data}`}}]}]})});
+  if(!response.ok)throw Error("API");
+  const json=await response.json();const parsed=JSON.parse(json.choices[0].message.content);
+  return (parsed.rows||[]).map(r=>{const code=String(r.code||"").trim();const description=String(r.description||PRODUCTS[code]||"").trim();return {code,description,units:String(r.units??""),unknown:!description}});
 }
 function renderPromos(){
  $("#promoEditor").innerHTML=Object.entries(promos).map(([code,items])=>`<div class="promo" data-promo="${esc(code)}"><div class="promo-head"><b>Código</b><input class="pcode" value="${esc(code)}"><button class="remove delpromo">Eliminar</button></div><div class="items">${items.map((it,j)=>`<div class="promo-item"><input class="qty" type="number" min="0" value="${it[0]}"><input class="desc" value="${esc(it[1])}"><button class="remove delitem" data-j="${j}">✕</button></div>`).join("")}</div><button class="button small secondary additem">＋ Producto</button></div>`).join("");
