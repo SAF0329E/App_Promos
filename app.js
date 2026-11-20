@@ -61,10 +61,9 @@ function parseOCR(text){
     const m=clean.match(/[*]?\s*(\d{3,5})(?:\s+(.+?))?\s+(\d{1,5})\s*$/);
     if(m){
       const code=m[1], description=(m[2]||PRODUCTS[code]||"").trim();
-      found.push({code,units:m[3],description,unknown:!description});
-    } else {
-      const fallback=clean.match(/^(.+?)\s+(\d{1,5})\s*$/);
-      if(fallback)found.push({code:"",description:fallback[1].trim(),units:fallback[2],unknown:false});
+      if(description.length>=3&&/[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(description)){
+        found.push({code,units:m[3],description,unknown:false});
+      }
     }
   }
   return found;
