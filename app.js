@@ -18,6 +18,12 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 function toast(text){const e=$("#toast");e.textContent=text;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2600)}
 function savePromos(){localStorage.setItem("bodega-promos",JSON.stringify(promos))}
+function productKey(name){
+  return String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase()
+    .replace(/\bDETERGENTE\b/g,"DETER").replace(/\bMANZANA\b/g,"MANZ")
+    .replace(/\bGRS?\b|\bGRAMOS?\b|\bUNDS?\b|\bUNIDADES?\b|\bSOBRES?\b/g,"")
+    .replace(/[^A-Z0-9]+/g," ").trim();
+}
 function renderRows(){
   const body=$("#inputRows");
   body.innerHTML=rows.map((r,i)=>`<tr class="${r.unknown?"unknown":""}">
@@ -33,11 +39,17 @@ function calculate(){
     const parts=description.split(/\s*\+\s*/).map(part=>part.trim()).filter(Boolean);
     const isWrittenPromo=parts.length>1&&parts.every(part=>/^\*?\s*\d+\s+.+/.test(part));
     if(isWrittenPromo){
-      parts.forEach(part=>{const match=part.match(/^\*?\s*(\d+)\s+(.+)$/);if(match){const q=Number(match[1]);const d=match[2].trim();map.set(d,(map.get(d)||0)+q*n)}});
-    } else if(promos[code]) promos[code].forEach(([q,d])=>map.set(d,(map.get(d)||0)+q*n));
-    else {const d=description||"Producto no identificado";map.set(d,(map.get(d)||0)+n)}
+      parts.forEach(part=>{
+        const match=part.match(/^\*?\s*(\d+)\s+(.+)$/);
+        if(match){
+          const q=Number(match[1]),d=match[2].trim(),key=productKey(d),current=map.get(key);
+          map.set(key,{description:current?.description||d,units:(current?.units||0)+q*n});
+        }
+      });
+    } else if(promos[code]) promos[code].forEach(([q,d])=>{const key=productKey(d);const current=map.get(key);map.set(key,{description:current?.description||d,units:(current?.units||0)+q*n})});
+    else {const d=description||"Producto no identificado";const key=productKey(d);const current=map.get(key);map.set(key,{description:current?.description||d,units:(current?.units||0)+n})}
   });
- lastTotals=[...map].map(([description,units])=>({description,units}));
+ lastTotals=[...map.values()];
  $("#totals").classList.toggle("empty",!lastTotals.length);
  $("#totals").innerHTML=lastTotals.length?lastTotals.map(x=>`<div class="total-line"><span>${esc(x.description)}</span><b>${x.units}</b></div>`).join(""):"Aún no hay líneas calculadas.";
  return lastTotals;
@@ -89,19 +101,23 @@ async function readOCRInBestOrientation(file){
 async function readPhoto(file,append=false){
  $("#readerState").hidden=false;$("#readerState").textContent="Leyendo imagen…";
  const config=JSON.parse(localStorage.getItem("bodega-config")||"{}");
- if(!navigator.onLine||!config.apiKey){
-   $("#readerState").textContent="Se necesita conexión y una clave de visión para leer esta tabla con precisión.";
-   toast("Configura la clave de OpenAI en Configuración para evitar errores de lectura.");
-   return;
- }
- try{
+ if(navigator.onLine&&config.apiKey)try{
    const parsed=await visionRead(file,config);
    if(!parsed.length)throw Error("No se encontraron filas");
    rows=append?rows.concat(parsed):parsed;
    renderRows();calculate();$("#readerState").textContent="Lectura con visión completada.";
  }catch(e){
-   $("#readerState").textContent="No se pudo leer la imagen. Tómala más recta y con buena luz.";
-   toast("No se guardaron datos porque la lectura no fue confiable.");
+   toast("La visión no respondió; se intentará lectura local.");
+ }
+ try{
+   if(!window.Tesseract)throw Error("Tesseract no disponible");
+   const parsed=await readOCRInBestOrientation(file);
+   if(!parsed.length)throw Error("No se encontraron filas");
+   rows=append?rows.concat(parsed):parsed;
+   renderRows();calculate();$("#readerState").textContent="Lectura local terminada; revisa los nombres y unidades.";
+ }catch(e){
+   $("#readerState").textContent="No se pudo leer la imagen. Puedes agregar las líneas manualmente.";
+   toast("No se encontraron datos legibles.");
  }
 }
 async function readPhotos(files){
@@ -113,7 +129,11 @@ async function visionRead(file,config){
  const data=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file)});
  if(config.provider==="anthropic")throw Error("Claude requiere un proxy seguro");
   const response=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${config.apiKey}`},body:JSON.stringify({model:"gpt-4o-mini",response_format:{type:"json_object"},messages:[{role:"system",content:"Lee una tabla de pedidos que puede estar girada. Sus columnas son Code, Description y UNIDADES. Devuelve únicamente JSON con el formato {rows:[{code:string,description:string,units:number}]}. El campo units DEBE ser exclusivamente el número de la columna UNIDADES, que está al extremo derecho de cada fila. Nunca uses números que formen parte de la descripción, como x 300, x 400 ml, x 12 und, 4H x 6 und o 450 GRS. Esos números describen el contenido o tamaño del producto, no la cantidad pedida. El código solo sirve internamente para reconocer promociones y no debe aparecer en la descripción. Ignora tachaduras y marcas rojas o azules. No inventes datos."},{role:"user",content:[{type:"text",text:"Gira mentalmente la foto si es necesario. Lee cada fila completa: nombre exacto de Description y el número final de la columna UNIDADES. Si una fila corresponde a una promoción, units es cuántas veces se pidió esa promoción; después el programa multiplicará todos sus productos por esa cantidad."},{type:"image_url",image_url:{url:`data:${file.type};base64,${data}`}}]}]})});
-  if(!response.ok)throw Error("API");
+  if(!response.ok){
+    let detail="";
+    try{const error=await response.json();detail=error?.error?.message||""}catch{}
+    throw Error(`API ${response.status}${detail?`: ${detail}`:""}`);
+  }
   const json=await response.json();const parsed=JSON.parse(json.choices[0].message.content);
   return (parsed.rows||[]).map(r=>{const code=String(r.code||"").trim();const description=String(r.description||PRODUCTS[code]||"").trim();return {code,description,units:String(r.units??""),unknown:!description}});
 }
