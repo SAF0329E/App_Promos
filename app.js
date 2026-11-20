@@ -87,6 +87,7 @@ function ocrScore(items){
 function parseOCRLayout(data){
   const words=(data.words||[]).filter(w=>w.text&&Number(w.confidence??w.conf??0)>=25)
     .map(w=>({text:w.text.trim(),x:w.bbox?.x0||0,y:((w.bbox?.y0||0)+(w.bbox?.y1||0))/2}));
+  const pageWidth=Number(data.width)||Math.max(...words.map(w=>w.x),1);
   const groups=[];
   words.sort((a,b)=>a.y-b.y||a.x-b.x).forEach(word=>{
     let row=groups.find(g=>Math.abs(g.y-word.y)<12);
@@ -95,10 +96,11 @@ function parseOCRLayout(data){
   });
   return groups.map(row=>{
     const tokens=row.words.sort((a,b)=>a.x-b.x).map(w=>w.text);
-    const codeIndex=tokens.findIndex(t=>/^\*?\d{3,5}$/.test(t.replace(/[^\d*]/g,"")));
+    const codeIndex=row.words.findIndex(w=>w.x<pageWidth*.35&&/^\*?\d{3,5}$/.test(w.text.replace(/[^\d*]/g,"")));
     if(codeIndex<0)return null;
-    const code=tokens[codeIndex].replace(/[^\d]/g,"");
-    const unitIndex=[...Array(tokens.length).keys()].reverse().find(i=>i>codeIndex&&/^\d{1,5}$/.test(tokens[i].replace(/[^\d]/g,"")));
+    const code=row.words[codeIndex].text.replace(/[^\d]/g,"");
+    const unitIndex=row.words.map((w,i)=>({w,i})).reverse()
+      .find(({w,i})=>i>codeIndex&&w.x>pageWidth*.78&&/^\d{1,5}$/.test(w.text.replace(/[^\d]/g,"")) )?.i;
     if(unitIndex==null)return null;
     const description=tokens.slice(codeIndex+1,unitIndex)
       .filter(t=>!/^(EDISSON|DIEGO|DIEG0)$/i.test(t)).join(" ").trim();
