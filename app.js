@@ -28,11 +28,15 @@ function renderRows(){
   body.querySelectorAll("[data-remove]").forEach(x=>x.onclick=()=>{rows.splice(+x.dataset.remove,1);renderRows()});
 }
 function calculate(){
- const map=new Map();
- rows.forEach(r=>{const n=Number(r.units);const code=String(r.code||"").replace(/^\*/,"").trim();if(!code||!n)return;
-   if(promos[code]) promos[code].forEach(([q,d])=>map.set(d,(map.get(d)||0)+q*n));
-    else {const d=(r.description||PRODUCTS[code]||"Producto no identificado").trim();map.set(d,(map.get(d)||0)+n)}
- });
+  const map=new Map();
+  rows.forEach(r=>{const n=Number(r.units);const code=String(r.code||"").replace(/^\*/,"").trim();const description=(r.description||PRODUCTS[code]||"").trim();if(!n||(!code&&!description))return;
+    const parts=description.split(/\s*\+\s*/).map(part=>part.trim()).filter(Boolean);
+    const isWrittenPromo=parts.length>1&&parts.every(part=>/^\*?\s*\d+\s+.+/.test(part));
+    if(isWrittenPromo){
+      parts.forEach(part=>{const match=part.match(/^\*?\s*(\d+)\s+(.+)$/);if(match){const q=Number(match[1]);const d=match[2].trim();map.set(d,(map.get(d)||0)+q*n)}});
+    } else if(promos[code]) promos[code].forEach(([q,d])=>map.set(d,(map.get(d)||0)+q*n));
+    else {const d=description||"Producto no identificado";map.set(d,(map.get(d)||0)+n)}
+  });
  lastTotals=[...map].map(([description,units])=>({description,units}));
  $("#totals").classList.toggle("empty",!lastTotals.length);
  $("#totals").innerHTML=lastTotals.length?lastTotals.map(x=>`<div class="total-line"><span>${esc(x.description)}</span><b>${x.units}</b></div>`).join(""):"Aún no hay líneas calculadas.";
@@ -82,18 +86,23 @@ async function readOCRInBestOrientation(file){
   }
   return best.rows;
 }
-async function readPhoto(file){
+async function readPhoto(file,append=false){
  $("#readerState").hidden=false;$("#readerState").textContent="Leyendo imagen…";
  const config=JSON.parse(localStorage.getItem("bodega-config")||"{}");
  if(navigator.onLine&&config.apiKey){
-    try{rows=await visionRead(file,config);if(!rows.length)throw Error("No se encontraron filas");$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
+    try{const parsed=await visionRead(file,config);if(!parsed.length)throw Error("No se encontraron filas");rows=append?rows.concat(parsed):parsed;$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
  }
   $("#offlineNotice").hidden=false;
   try{
     if(!window.Tesseract)throw Error("Tesseract no disponible");
-    rows=await readOCRInBestOrientation(file);if(!rows.length)rows=[{code:"",description:"",units:"",unknown:false}];
+    const parsed=await readOCRInBestOrientation(file);if(!parsed.length)throw Error("No se encontraron filas");rows=append?rows.concat(parsed):parsed;
    renderRows();calculate();$("#readerState").textContent="Lectura local terminada.";
  }catch(e){rows=[{code:"",description:"",units:"",unknown:false}];renderRows();toast("Escribe las líneas manualmente.")}
+}
+async function readPhotos(files){
+  rows=[];lastTotals=[];renderRows();
+  for(const file of files)await readPhoto(file,true);
+  calculate();
 }
 async function visionRead(file,config){
  const data=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file)});
@@ -112,7 +121,7 @@ function setup(){
  $("#addRow").onclick=()=>{rows.push({code:"",description:"",units:"",unknown:false});renderRows()};
  $("#calculate").onclick=calculate;$("#newReport").onclick=()=>{rows=[];lastTotals=[];$("#offlineNotice").hidden=true;$("#readerState").hidden=true;renderRows();calculate()};
  $("#copyResult").onclick=async()=>{const text=lastTotals.map(x=>`${x.units} ${x.description}`).join("\n");if(!text)return toast("Primero calcula un total");await navigator.clipboard.writeText(text);toast("Resultado copiado")};
- ["cameraInput","galleryInput"].forEach(id=>$("#"+id).onchange=e=>e.target.files[0]&&readPhoto(e.target.files[0]));
+  ["cameraInput","galleryInput"].forEach(id=>$("#"+id).onchange=e=>e.target.files.length&&readPhotos([...e.target.files]));
  $("#addPromo").onclick=()=>{let c="nuevo";let n=1;while(promos[c])c=`nuevo${n++}`;promos[c]=[[1,"Nuevo producto"]];savePromos();renderPromos()};
  $("#exportPromos").onclick=()=>{const blob=new Blob([JSON.stringify(promos,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="promociones-bodega.json";a.click();URL.revokeObjectURL(a.href)};
  $("#importPromos").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!x||Array.isArray(x)||typeof x!=="object")throw Error();promos=x;savePromos();renderPromos();toast("Promociones importadas")}catch{toast("Archivo inválido")}};r.readAsText(f)};
