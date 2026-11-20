@@ -1,4 +1,4 @@
-const CACHE='bodega-aseo-v1';
+const CACHE='bodega-aseo-v2';
 const APP=['./','./index.html','./styles.css','./app.js','./manifest.json','./icons/icon.svg','https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(APP).catch(()=>{})).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
