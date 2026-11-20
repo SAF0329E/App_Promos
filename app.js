@@ -105,12 +105,14 @@ function parseOCRLayout(data){
     if(unitIndex==null)return null;
     const description=tokens.slice(codeIndex+1,unitIndex)
       .filter(t=>!/^(EDISSON|DIEGO|DIEG0)$/i.test(t)).join(" ").trim();
-    if(description.length<3)return null;
-    return {code,description,units:tokens[unitIndex].replace(/[^\d]/g,""),unknown:false};
+    const units=tokens[unitIndex].replace(/[^\d]/g,"");
+    const meaningfulWords=description.split(/\s+/).filter(word=>/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2,}/.test(word));
+    if(description.length<5||meaningfulWords.length<2||!units||Number(units)<=0)return null;
+    return {code,description,units,unknown:false};
   }).filter(Boolean);
 }
 function parsePaddleItems(items){
-  const words=items.filter(item=>item.text&&Number(item.score??1)>=.25).map(item=>{
+  const words=items.filter(item=>item.text&&Number(item.score??1)>=.25&&(/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2,}/.test(item.text)||/\d{3,5}/.test(item.text))).map(item=>{
     const poly=item.poly||[];
     const xs=poly.map(p=>Array.isArray(p)?p[0]:p.x||0),ys=poly.map(p=>Array.isArray(p)?p[1]:p.y||0);
     return {text:item.text.trim(),x:Math.min(...xs),y:(Math.min(...ys)+Math.max(...ys))/2};
