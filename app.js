@@ -89,15 +89,20 @@ async function readOCRInBestOrientation(file){
 async function readPhoto(file,append=false){
  $("#readerState").hidden=false;$("#readerState").textContent="Leyendo imagen…";
  const config=JSON.parse(localStorage.getItem("bodega-config")||"{}");
- if(navigator.onLine&&config.apiKey){
-    try{const parsed=await visionRead(file,config);if(!parsed.length)throw Error("No se encontraron filas");rows=append?rows.concat(parsed):parsed;$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
+ if(!navigator.onLine||!config.apiKey){
+   $("#readerState").textContent="Se necesita conexión y una clave de visión para leer esta tabla con precisión.";
+   toast("Configura la clave de OpenAI en Configuración para evitar errores de lectura.");
+   return;
  }
-  $("#offlineNotice").hidden=false;
-  try{
-    if(!window.Tesseract)throw Error("Tesseract no disponible");
-    const parsed=await readOCRInBestOrientation(file);if(!parsed.length)throw Error("No se encontraron filas");rows=append?rows.concat(parsed):parsed;
-   renderRows();calculate();$("#readerState").textContent="Lectura local terminada.";
- }catch(e){rows=[{code:"",description:"",units:"",unknown:false}];renderRows();toast("Escribe las líneas manualmente.")}
+ try{
+   const parsed=await visionRead(file,config);
+   if(!parsed.length)throw Error("No se encontraron filas");
+   rows=append?rows.concat(parsed):parsed;
+   renderRows();calculate();$("#readerState").textContent="Lectura con visión completada.";
+ }catch(e){
+   $("#readerState").textContent="No se pudo leer la imagen. Tómala más recta y con buena luz.";
+   toast("No se guardaron datos porque la lectura no fue confiable.");
+ }
 }
 async function readPhotos(files){
   rows=[];lastTotals=[];renderRows();
