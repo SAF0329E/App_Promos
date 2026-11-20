@@ -41,7 +41,7 @@ function calculate(){
 function parseOCR(text){
   const found=[];
   for(const line of text.split(/\r?\n/)){
-    const clean=line.replace(/[|]/g," ").replace(/\s+/g," ").trim();
+    const clean=line.replace(/[|]/g," ").replace(/\s+/g," ").replace(/^(DIEGO|DIEG0)\s+/i,"").trim();
     const m=clean.match(/[*]?\s*(\d{3,5})(?:\s+(.+?))?\s+(\d{1,5})\s*$/);
     if(m){
       const code=m[1], description=(m[2]||PRODUCTS[code]||"").trim();
@@ -53,17 +53,45 @@ function parseOCR(text){
   }
   return found;
 }
+async function rotateForOCR(file,degrees=90){
+  if(degrees===0)return file;
+  const source=await createImageBitmap(file);
+  const canvas=document.createElement("canvas");
+  const sideways=degrees===90||degrees===270;
+  canvas.width=sideways?source.height:source.width;
+  canvas.height=sideways?source.width:source.height;
+  const ctx=canvas.getContext("2d");
+  ctx.translate(canvas.width/2,canvas.height/2);
+  ctx.rotate(degrees*Math.PI/180);
+  ctx.drawImage(source,-source.width/2,-source.height/2);
+  return await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",.95));
+}
+function ocrScore(items){
+  return items.reduce((score,r)=>score+(r.code?5:0)+(r.description.trim().length>4?3:0)+(Number(r.units)>0?1:0),0);
+}
+async function readOCRInBestOrientation(file){
+  let best={rows:[],score:-1};
+  for(const degrees of [0,90,180,270]){
+    const image=await rotateForOCR(file,degrees);
+    const result=await Tesseract.recognize(image,"spa",{logger:m=>{
+      if(m.status)$("#readerState").textContent=`Revisando orientación ${degrees}°: ${Math.round((m.progress||0)*100)}%`;
+    }});
+    const candidate=parseOCR(result.data.text);
+    const score=ocrScore(candidate);
+    if(score>best.score)best={rows:candidate,score};
+  }
+  return best.rows;
+}
 async function readPhoto(file){
  $("#readerState").hidden=false;$("#readerState").textContent="Leyendo imagen…";
  const config=JSON.parse(localStorage.getItem("bodega-config")||"{}");
  if(navigator.onLine&&config.apiKey){
     try{rows=await visionRead(file,config);if(!rows.length)throw Error("No se encontraron filas");$("#readerState").textContent="Lectura con visión completada.";renderRows();calculate();return}catch(e){toast("No se pudo usar la visión; se intentará lectura local.")}
  }
- $("#offlineNotice").hidden=false;
- try{
-   if(!window.Tesseract)throw Error("Tesseract no disponible");
-   const result=await Tesseract.recognize(file,"spa",{logger:m=>{if(m.status)$("#readerState").textContent=`Lectura local: ${Math.round((m.progress||0)*100)}%`;}});
-   rows=parseOCR(result.data.text);if(!rows.length)rows=[{code:"",description:"",units:"",unknown:false}];
+  $("#offlineNotice").hidden=false;
+  try{
+    if(!window.Tesseract)throw Error("Tesseract no disponible");
+    rows=await readOCRInBestOrientation(file);if(!rows.length)rows=[{code:"",description:"",units:"",unknown:false}];
    renderRows();calculate();$("#readerState").textContent="Lectura local terminada.";
  }catch(e){rows=[{code:"",description:"",units:"",unknown:false}];renderRows();toast("Escribe las líneas manualmente.")}
 }
