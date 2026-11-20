@@ -100,7 +100,7 @@ function parseOCRLayout(data){
     if(codeIndex<0)return null;
     const code=row.words[codeIndex].text.replace(/[^\d]/g,"");
     const unitIndex=row.words.map((w,i)=>({w,i})).reverse()
-      .find(({w,i})=>i>codeIndex&&w.x>pageWidth*.78&&/^\d{1,5}$/.test(w.text.replace(/[^\d]/g,"")) )?.i;
+      .find(({w,i})=>i>codeIndex&&w.x>pageWidth*.55&&/^\d{1,5}$/.test(w.text.replace(/[^\d]/g,"")) )?.i;
     if(unitIndex==null)return null;
     const description=tokens.slice(codeIndex+1,unitIndex)
       .filter(t=>!/^(EDISSON|DIEGO|DIEG0)$/i.test(t)).join(" ").trim();
