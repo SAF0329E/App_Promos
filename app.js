@@ -85,12 +85,12 @@ function ocrScore(items){
   return items.reduce((score,r)=>score+(r.code?5:0)+(r.description.trim().length>4?3:0)+(Number(r.units)>0?1:0),0);
 }
 function parseOCRLayout(data){
-  const words=(data.words||[]).filter(w=>w.text&&Number(w.confidence??w.conf??0)>=25)
+  const words=(data.words||[]).filter(w=>w.text&&Number(w.confidence??w.conf??0)>=0)
     .map(w=>({text:w.text.trim(),x:w.bbox?.x0||0,y:((w.bbox?.y0||0)+(w.bbox?.y1||0))/2}));
   const pageWidth=Number(data.width)||Math.max(...words.map(w=>w.x),1);
   const groups=[];
   words.sort((a,b)=>a.y-b.y||a.x-b.x).forEach(word=>{
-    let row=groups.find(g=>Math.abs(g.y-word.y)<12);
+    let row=groups.find(g=>Math.abs(g.y-word.y)<18);
     if(!row){row={y:word.y,words:[]};groups.push(row)}
     row.words.push(word);
   });
@@ -100,7 +100,7 @@ function parseOCRLayout(data){
     if(codeIndex<0)return null;
     const code=row.words[codeIndex].text.replace(/[^\d]/g,"");
     const unitIndex=row.words.map((w,i)=>({w,i})).reverse()
-      .find(({w,i})=>i>codeIndex&&w.x>pageWidth*.55&&/^\d{1,5}$/.test(w.text.replace(/[^\d]/g,"")) )?.i;
+      .find(({w,i})=>i>codeIndex&&w.x>pageWidth*.45&&/^\d{1,5}$/.test(w.text.replace(/[^\d]/g,"")) )?.i;
     if(unitIndex==null)return null;
     const description=tokens.slice(codeIndex+1,unitIndex)
       .filter(t=>!/^(EDISSON|DIEGO|DIEG0)$/i.test(t)).join(" ").trim();
@@ -112,7 +112,7 @@ async function readOCRInBestOrientation(file){
   let best={rows:[],score:-1};
   for(const degrees of [0,90,180,270]){
     const image=await rotateForOCR(file,degrees);
-    const result=await Tesseract.recognize(image,"spa",{logger:m=>{
+    const result=await Tesseract.recognize(image,"spa",{tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",logger:m=>{
       if(m.status)$("#readerState").textContent=`Revisando orientación ${degrees}°: ${Math.round((m.progress||0)*100)}%`;
     }});
     const candidate=parseOCRLayout(result.data);
