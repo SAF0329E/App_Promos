@@ -31,7 +31,7 @@ function calculate(){
  const map=new Map();
  rows.forEach(r=>{const n=Number(r.units);const code=String(r.code||"").replace(/^\*/,"").trim();if(!code||!n)return;
    if(promos[code]) promos[code].forEach(([q,d])=>map.set(d,(map.get(d)||0)+q*n));
-   else {const d=(r.description||PRODUCTS[code]||`Código ${code}`).trim();map.set(d,(map.get(d)||0)+n)}
+    else {const d=(r.description||PRODUCTS[code]||"Producto no identificado").trim();map.set(d,(map.get(d)||0)+n)}
  });
  lastTotals=[...map].map(([description,units])=>({description,units}));
  $("#totals").classList.toggle("empty",!lastTotals.length);
